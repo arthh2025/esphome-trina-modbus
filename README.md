@@ -37,7 +37,7 @@ This is an unofficial community project and is not affiliated with or endorsed b
 
 ## Tested Hardware and Software
 
-- Trina Nexeos hybrid inverter with an RS485/COM2 interface
+- Trina Nexeos hybrid inverter (TRH 10K-T3 10kW) with an RS485/COM2 interface
   - According to the Modbus manual, other inverter brands or models may use the same protocol or register structure. Compatibility has not been verified and should not be assumed without testing.
 - LILYGO TTGO T-CAN485 based on ESP32
   - Integrated MAX13487E RS485 transceiver
@@ -52,11 +52,8 @@ Other Nexeos firmware revisions and inverter variants may expose different regis
 esphome-nexeos-modbus/
 ├── README.md
 ├── LICENSE
-├── esphome/
-│   ├── nexeos-tcan485.yaml
-│   └── secrets.example.yaml
-└── docs/
-    └── community-post.md
+├── nexeos-tcan485.yaml
+└── secrets.example.yaml
 ```
 
 ## Hardware Connection
@@ -77,6 +74,11 @@ GPIO16, GPIO19, and GPIO17 must be driven physically HIGH. The supplied YAML use
 ### Inverter Connection
 
 Connect the LILYGO board to the inverter's documented RS485/COM2 port:
+
+<img width="221" height="159" alt="pastedImage" src="https://github.com/user-attachments/assets/8ac42cc3-adb1-4432-aa94-3d49ba18e9f6" />
+
+<img width="507" height="105" alt="pastedImage" src="https://github.com/user-attachments/assets/27014048-797d-4ef2-96d4-0bd20abb5ce1" />
+
 
 ```text
 LILYGO RS485 A  -> inverter RS485 A
