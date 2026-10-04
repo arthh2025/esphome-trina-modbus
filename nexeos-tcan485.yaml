@@ -1,0 +1,563 @@
+substitutions:
+  device_name: nexeos-tcan485
+  friendly_name: "Nexeos T-CAN485"
+  modbus_baud_rate: "9600"
+  modbus_slave: "3"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 600
+    then:
+      - output.turn_on: boost_enable
+      - delay: 500ms
+      - output.turn_on: rs485_shutdown_disable
+      - delay: 500ms
+      - output.turn_on: rs485_autodirection_enable
+      - delay: 2s
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret nexeos_api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret nexeos_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "Nexeos T-CAN485 Fallback"
+    password: !secret nexeos_fallback_password
+
+captive_portal:
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+output:
+  - platform: gpio
+    id: boost_enable
+    pin: { number: GPIO16, inverted: false }
+  - platform: gpio
+    id: rs485_shutdown_disable
+    pin: { number: GPIO19, inverted: false }
+  - platform: gpio
+    id: rs485_autodirection_enable
+    pin: { number: GPIO17, inverted: false }
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_rgb
+    name: "Status LED"
+    pin: GPIO4
+    num_leds: 1
+    channel_colors: GRB
+    chipset: WS2812
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+
+uart:
+  id: nexeos_uart
+  tx_pin: GPIO22
+  rx_pin: GPIO21
+  baud_rate: ${modbus_baud_rate}
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 512
+
+modbus:
+  id: nexeos_modbus
+  uart_id: nexeos_uart
+  role: client
+  send_wait_time: 1000ms
+  turnaround_time: 200ms
+
+modbus_controller:
+  - id: nexeos
+    address: ${modbus_slave}
+    modbus_id: nexeos_modbus
+    setup_priority: -100
+    update_interval: 10s
+    max_cmd_retries: 1
+    offline_skip_updates: 5
+
+sensor:
+  # Frequent values: every 10 seconds
+  # AC / grid
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: grid_frequency
+    name: "Netzfrequenz"
+    register_type: input
+    address: 1367
+    value_type: U_WORD
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    state_class: measurement
+    accuracy_decimals: 2
+    force_new_range: true
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: ac_active_power
+    name: "AC-Wirkleistung"
+    register_type: input
+    address: 1370
+    value_type: S_DWORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: grid_power_raw
+    name: "Netzleistung roh"
+    register_type: holding
+    address: 1111
+    value_type: S_DWORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    force_new_range: true
+
+  - platform: template
+    id: grid_import_power
+    name: "Netzbezug Leistung"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      if (!id(grid_power_raw).has_state()) return NAN;
+      return max(0.0f, id(grid_power_raw).state);
+
+  - platform: template
+    id: grid_export_power
+    name: "Netzeinspeisung Leistung"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      if (!id(grid_power_raw).has_state()) return NAN;
+      return max(0.0f, -id(grid_power_raw).state);
+
+  - platform: integration
+    id: grid_import_energy
+    name: "Netzbezug gesamt"
+    sensor: grid_import_power
+    time_unit: h
+    integration_method: trapezoid
+    restore: true
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  - platform: integration
+    id: grid_export_energy
+    name: "Netzeinspeisung gesamt"
+    sensor: grid_export_power
+    time_unit: h
+    integration_method: trapezoid
+    restore: true
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  - platform: total_daily_energy
+    id: grid_import_energy_today
+    name: "Netzbezug heute"
+    power_id: grid_import_power
+    restore: true
+    method: trapezoid
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  - platform: total_daily_energy
+    id: grid_export_energy_today
+    name: "Netzeinspeisung heute"
+    power_id: grid_export_power
+    restore: true
+    method: trapezoid
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  # PV
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv1_voltage
+    name: "PV1 Spannung"
+    register_type: input
+    address: 1318
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv1_current
+    name: "PV1 Strom"
+    register_type: input
+    address: 1319
+    value_type: U_WORD
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv2_voltage
+    name: "PV2 Spannung"
+    register_type: input
+    address: 1320
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv2_current
+    name: "PV2 Strom"
+    register_type: input
+    address: 1321
+    value_type: U_WORD
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv_total_power
+    name: "PV-Leistung"
+    register_type: input
+    address: 1600
+    value_type: U_DWORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    force_new_range: true
+
+  # Battery
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_voltage
+    name: "Batteriespannung"
+    register_type: input
+    address: 1616
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    force_new_range: true
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_current
+    name: "Batteriestrom"
+    register_type: input
+    address: 1617
+    value_type: S_WORD
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_power
+    name: "Batterieleistung"
+    register_type: input
+    address: 1618
+    value_type: S_DWORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+
+  # Slow values: every 60 seconds
+  # PV energy
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv_energy_today
+    name: "PV-Ertrag heute"
+    register_type: input
+    address: 1602
+    value_type: U_DWORD
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 1
+    skip_updates: 5
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: pv_energy_total
+    name: "PV-Ertrag gesamt"
+    register_type: input
+    address: 1604
+    value_type: U_DWORD
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 1
+    skip_updates: 5
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  # Battery status and energy
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_status_code
+    name: "Batteriestatus Code"
+    register_type: input
+    address: 1607
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 5
+    entity_category: diagnostic
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_temperature
+    name: "Batterietemperatur"
+    register_type: input
+    address: 1620
+    value_type: S_WORD
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    skip_updates: 5
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_soc
+    name: "Batterie SOC"
+    register_type: input
+    address: 1621
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+    skip_updates: 5
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_soh
+    name: "Batterie SOH"
+    register_type: input
+    address: 1622
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+    skip_updates: 5
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_charge_energy_today
+    name: "Batterieladung heute"
+    register_type: input
+    address: 1625
+    value_type: U_DWORD
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 1
+    skip_updates: 5
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_discharge_energy_today
+    name: "Batterieentladung heute"
+    register_type: input
+    address: 1627
+    value_type: U_DWORD
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 1
+    skip_updates: 5
+    force_new_range: true
+    filters:
+      - multiply: 0.1
+
+  # Diagnostics
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: modbus_address
+    name: "Modbus-Adresse"
+    register_type: input
+    address: 1001
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 5
+    entity_category: diagnostic
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: device_state_code
+    name: "Gerätestatus Code"
+    register_type: input
+    address: 1308
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 5
+    entity_category: diagnostic
+    force_new_range: true
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: grid_connection_code
+    name: "Netzverbindung Code"
+    register_type: input
+    address: 1390
+    value_type: U_WORD
+    accuracy_decimals: 0
+    skip_updates: 5
+    entity_category: diagnostic
+    force_new_range: true
+
+number:
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_soc_upper_limit
+    name: "Batterie obere SOC-Grenze"
+    register_type: holding
+    address: 1153
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    min_value: 20
+    max_value: 100
+    step: 1
+    skip_updates: 5
+    force_new_range: true
+    lambda: |-
+      if (x == 65535) return NAN;
+      return x * 0.01;
+    write_lambda: |-
+      return x * 100.0;
+
+  - platform: modbus_controller
+    modbus_controller_id: nexeos
+    id: battery_soc_lower_limit
+    name: "Batterie untere SOC-Grenze"
+    register_type: holding
+    address: 1154
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 80
+    step: 1
+    skip_updates: 5
+    force_new_range: true
+    lambda: |-
+      if (x == 65535) return NAN;
+      return x * 0.01;
+    write_lambda: |-
+      return x * 100.0;
+
+text_sensor:
+  - platform: template
+    name: "Gerätestatus"
+    lambda: |-
+      if (!id(device_state_code).has_state()) return {"Unbekannt"};
+      int v = (int) id(device_state_code).state;
+      if (v == 0) return {"Warten"};
+      if (v == 1) return {"Normal"};
+      if (v == 2) return {"Fehler"};
+      if (v == 4) return {"Prüfung"};
+      return {"Unbekannt " + to_string(v)};
+    update_interval: 60s
+
+  - platform: template
+    name: "Netzverbindung"
+    lambda: |-
+      if (!id(grid_connection_code).has_state()) return {"Unbekannt"};
+      if ((int) id(grid_connection_code).state == 1) return {"Verbunden"};
+      return {"Getrennt"};
+    update_interval: 60s
+
+  - platform: template
+    name: "Batteriestatus"
+    lambda: |-
+      if (!id(battery_status_code).has_state()) return {"Unbekannt"};
+      int v = (int) id(battery_status_code).state;
+      if (v == 0) return {"Nicht verfügbar"};
+      if (v == 1) return {"Bereit"};
+      if (v == 2) return {"Laden"};
+      if (v == 3) return {"Entladen"};
+      if (v == 4) return {"Fehler"};
+      return {"Unbekannt " + to_string(v)};
+    update_interval: 60s
