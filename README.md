@@ -90,6 +90,12 @@ Use a twisted pair for A/B. Keep the cable away from mains and high-current cond
 
 Do not connect the RS485 wires to the board's CAN terminals.
 
+Here some pictures from my implementation. I just used the plastic housing the LILYGO was shipped in as its final housing. I just had to cut out some bits of the box to make space for the cables. On the left side you can see the cut of patch cable. Orange, White-orange and green (GND) are the wires I am using for communication. 
+<img width="2000" height="1126" alt="grafik" src="https://github.com/user-attachments/assets/342082e0-6c9d-43ca-bb66-ccfbd0bc982b" />
+
+<img width="2000" height="1126" alt="grafik" src="https://github.com/user-attachments/assets/e0fce83c-9d67-4b39-a40d-6941bad206ac" />
+
+
 ## Modbus Configuration
 
 The tested configuration is:
@@ -153,9 +159,17 @@ The default hostname in this project is:
 nexeos-tcan485.local
 ```
 
+Here some pictures from the implementation in Home Assistant:
+
+<img width="1554" height="581" alt="grafik" src="https://github.com/user-attachments/assets/cad86d45-8c8e-4cc4-a332-890d1218670f" />
+
+<img width="494" height="907" alt="grafik" src="https://github.com/user-attachments/assets/a499cb5e-c866-47df-9197-d365999436e6" />
+
+
+
 ## Configuration Overview
 
-The main configuration is available at [`esphome/nexeos-tcan485.yaml`](esphome/nexeos-tcan485.yaml).
+The main configuration is available at [`nexeos-tcan485.yaml`](nexeos-tcan485.yaml).
 
 ### Polling Groups
 
